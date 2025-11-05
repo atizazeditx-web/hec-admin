@@ -1,43 +1,177 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>HEC ADMIN</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HEC ADMIN PANEL</title>
   <link href="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-database-compat.js"></script>
+  <style>
+    body { background: #000; color: #fff; font-family: 'Arial'; }
+    .glass { background: rgba(30,30,30,.9); backdrop-filter: blur(12px); border: 1px solid #ff5252; }
+    .btn { background: #ff1744; transition: 0.3s; }
+    .btn:hover { background: #ff5252; transform: scale(1.05); }
+    .input { background: #222; border: 1px solid #ff5252; color: #fff; }
+  </style>
 </head>
-<body class="bg-black text-white p-10">
-  <div class="max-w-md mx-auto bg-gray-900 p-6 rounded-lg">
-    <h1 class="text-3xl text-red-500 text-center mb-6">HEC ADMIN</h1>
+<body class="p-6">
+  <div class="max-w-2xl mx-auto glass rounded-xl p-8 shadow-2xl">
+    <h1 class="text-4xl font-bold text-red-500 text-center mb-8">HEC ADMIN PANEL</h1>
 
     <!-- ADD USER -->
-    <input id="user" class="w-full p-3 bg-gray-800 rounded mb-3" placeholder="Username">
-    <input id="pass" type="password" class="w-full p-3 bg-gray-800 rounded mb-3" placeholder="Password">
-    <button onclick="addUser()" class="w-full bg-red-600 py-3 rounded mb-6">ADD USER</button>
+    <div class="grid grid-cols-2 gap-4 mb-6">
+      <input id="username" class="input p-3 rounded" placeholder="Username" />
+      <input id="password" type="password" class="input p-3 rounded" placeholder="Password" />
+    </div>
+    <button id="addUserBtn" class="btn w-full py-3 rounded text-lg font-bold">ADD USER</button>
+    <p id="status" class="mt-4 text-center text-green-400 font-bold"></p>
 
-    <!-- ADD UID -->
-    <button onclick="addUid()" class="w-full bg-green-600 py-3 rounded">ADD UID TO ALL USERS</button>
-    <p id="msg" class="mt-4 text-center text-green-400"></p>
+    <!-- USER LIST -->
+    <div class="mt-10">
+      <h2 class="text-2xl text-red-400 mb-4">USERS</h2>
+      <div id="userList" class="space-y-3"></div>
+    </div>
+
+    <!-- UID SECTION -->
+    <div id="uidSection" class="mt-8 hidden">
+      <h3 id="uidTitle" class="text-xl font-bold mb-3"></h3>
+      <button id="addUidBtn" class="btn px-6 py-2 rounded mb-3">+ ADD UID</button>
+      <div id="uidList" class="space-y-2"></div>
+    </div>
   </div>
 
   <script>
+    // === FIREBASE CONFIG ===
     const firebaseConfig = {
       apiKey: "AIzaSyDqOWLMJvEPLvRQr7DPhl2H93AAf6Fr3AU",
-      databaseURL: "https://hec-bypass-default-rtdb.asia-southeast1.firebasedatabase.app"
+      authDomain: "hec-bypass.firebaseapp.com",
+      databaseURL: "https://hec-bypass-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "hec-bypass"
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    // ADD USER
-    async function addUser() {
-      const u = document.getElementById('user').value.trim();
-      const p = document.getElementById('pass').value;
-      if (!u || !p) return alert("Fill both");
-      const hash = await sha256(p);
-      db.ref('users').push({ username: u, password: hash, uids: [], freeuids: [], secrets: [] });
-      alert("User added!");
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const addUserBtn = document.getElementById('addUserBtn');
+    const status = document.getElementById('status');
+    const userList = document.getElementById('userList');
+    const uidSection = document.getElementById('uidSection');
+    const uidTitle = document.getElementById('uidTitle');
+    const addUidBtn = document.getElementById('addUidBtn');
+    const uidListDiv = document.getElementById('uidList');
+    let currentUserId = null;
+
+    // === ADD USER ===
+    addUserBtn.addEventListener('click', async () => {
+      const username = usernameInput.value.trim();
+      const password = passwordInput.value.trim();
+      if (!username || !password) return showStatus('Fill both fields!', 'red');
+
+      const hashed = await sha256(password);
+      const newUserRef = db.ref('users').push();
+      await newUserRef.set({
+        username,
+        password: hashed,
+        uids: [],
+        freeuids: [],
+        secrets: []
+      });
+
+      usernameInput.value = ''; passwordInput.value = '';
+      showStatus('USER ADDED!', 'green');
+      loadUsers();
+    });
+
+    // === HASH PASSWORD ===
+    async function sha256(str) {
+      const buffer = new TextEncoder().encode(str);
+      const hash = await crypto.subtle.digest('SHA-256', buffer);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // ADD UID TO ALL USERS (AS NUMBER!)
-    function addUid() {
-      const uidStr = prompt("Enter UID (e…
+    // === LOAD USERS ===
+    async function loadUsers() {
+      userList.innerHTML = '';
+      const snap = await db.ref('users').once('value');
+      snap.forEach(child => {
+        const id = child.key;
+        const data = child.val();
+        const div = document.createElement('div');
+        div.className = 'bg-gray-800 p-3 rounded flex justify-between items-center';
+        div.innerHTML = `
+          <span class="font-bold">${data.username}</span>
+          <button onclick="openUIDs('${id}', '${data.username}')" class="text-green-400 text-sm">Manage UIDs</button>
+          <button onclick="deleteUser('${id}')" class="text-red-400 text-sm ml-2">Delete</button>
+        `;
+        userList.appendChild(div);
+      });
+    }
+
+    // === OPEN UID SECTION ===
+    window.openUIDs = async (userId, username) => {
+      currentUserId = userId;
+      uidTitle.textContent = `UIDs for ${username}`;
+      uidSection.classList.remove('hidden');
+      loadUIDs();
+    };
+
+    // === LOAD UIDs ===
+    async function loadUIDs() {
+      uidListDiv.innerHTML = '';
+      const snap = await db.ref(`users/${currentUserId}/uids`).once('value');
+      const uids = snap.val() || [];
+      uids.forEach((u, i) => {
+        const div = document.createElement('div');
+        div.className = 'bg-gray-700 p-2 rounded flex justify-between text-sm';
+        div.innerHTML = `
+          <span>${u.uid} (${u.displayName || 'VIP'}) - ${u.expiry === 9999999999999 ? 'LIFETIME' : new Date(u.expiry).toLocaleDateString()}</span>
+          <button onclick="removeUID(${i})" class="text-red-400">X</button>
+        `;
+        uidListDiv.appendChild(div);
+      });
+    }
+
+    // === ADD UID ===
+    addUidBtn.addEventListener('click', () => {
+      const uid = prompt('Enter UID:');
+      if (!uid) return;
+      const name = prompt('Display Name (optional):') || 'VIP';
+      const expiry = prompt('Expiry: Type "lifetime" or YYYY-MM-DD', 'lifetime');
+      const exp = expiry === 'lifetime' ? 9999999999999 : new Date(expiry).getTime();
+
+      db.ref(`users/${currentUserId}/uids`).push({ uid, displayName: name, expiry: exp });
+      setTimeout(loadUIDs, 600);
+    });
+
+    // === REMOVE UID ===
+    window.removeUID = async (index) => {
+      const snap = await db.ref(`users/${currentUserId}/uids`).once('value');
+      const list = snap.val() || [];
+      list.splice(index, 1);
+      await db.ref(`users/${currentUserId}/uids`).set(list);
+      loadUIDs();
+    };
+
+    // === DELETE USER ===
+    window.deleteUser = async (id) => {
+      if (confirm('Delete this user and all UIDs?')) {
+        await db.ref(`users/${id}`).remove();
+        loadUsers();
+        uidSection.classList.add('hidden');
+      }
+    };
+
+    // === SHOW STATUS ===
+    function showStatus(msg, color) {
+      status.textContent = msg;
+      status.style.color = color === 'green' ? '#4ade80' : '#f87171';
+      setTimeout(() => status.textContent = '', 3000);
+    }
+
+    // === INIT ===
+    loadUsers();
+  </script>
+</body>
+</html>
