@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SG71 UID AUTH • Admin</title>
+  <link href="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-database-compat.js"></script>
+  <style>
+    body { background: linear-gradient(135deg, #1a1a1a, #000); color: #fff; font-family: 'Segoe UI', sans-serif; }
+    .glass { background: rgba(30,30,30,.8); backdrop-filter: blur(10px); border: 1px solid rgba(255,82,82,.3); }
+    .btn { background: #ff5252; transition: all 0.3s; }
+    .btn:hover { background: #ff1744; transform: translateY(-2px); }
+    .input { background: rgba(50,50,50,.8); border: 1px solid #ff5252; color: #fff; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+  <div class="max-w-4xl mx-auto glass rounded-2xl p-8 shadow-2xl">
+    <h1 class="text-4xl font-bold text-red-500 mb-8 text-center">HEC ADMIN PANEL</h1>
+
+    <div class="grid md:grid-cols-2 gap-6 mb-8">
+      <div>
+        <input id="newUsername" class="input w-full p-3 rounded" placeholder="Username" />
+      </div>
+      <div>
+        <input id="newPassword" type="password" class="input w-full p-3 rounded" placeholder="Password" />
+      </div>
+    </div>
+    <button id="addUserBtn" class="btn w-full py-3 rounded font-bold text-lg">ADD USER</button>
+    <p id="userAdded" class="mt-4 text-center hidden"></p>
+
+    <div class="mt-12">
+      <h2 class="text-2xl font-bold text-red-400 mb-4">USERS</h2>
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-red-800">
+            <th class="py-3 text-left">Username</th>
+            <th class="py-3 text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="userTbody"></tbody>
+      </table>
+    </div>
+
+    <div id="uidSection" class="mt-12 hidden">
+      <h3 id="uidSectionTitle" class="text-xl font-bold mb-4"></h3>
+      <button id="addUidBtn" class="btn px-6 py-2 rounded mb-4">ADD UID</button>
+      <div id="uidList"></div>
+    </div>
+  </div>
+
+  <script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDqOWLMJvEPLvRQr7DPhl2H93AAf6Fr3AU",
+  authDomain: "hec-bypass.firebaseapp.com",
+  databaseURL: "https://hec-bypass-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "hec-bypass",
+  storageBucket: "hec-bypass.firebasestorage.app",
+  messagingSenderId: "632273771631",
+  appId: "1:632273771631:web:e816cd27018a742052c19a",
+  measurementId: "G-M0ZMYHEDGY"
+};
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const userTbody = document.getElementById('userTbody');
+    const uidSection = document.getElementById('uidSection');
+    const uidSectionTitle = document.getElementById('uidSectionTitle');
+    const uidList = document.getElementById('uidList');
+    const addUidBtn = document.getElementById('addUidBtn');
+    let currentUserId = null;
+
+    async function hashPassword(p) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(p);
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function usernameExists(username) {
+      const snapshot = await db.ref('users').once('value');
+      const users = snapshot.val() || {};
+      return Object.values(users).some(u => u.username === username);
+    }
+
+    document.getElementById('addUserBtn').addEventListener('click', async () => {
+      const username = document.getElementById('newUsername').value.trim();
+      const password = document.getElementById('newPassword').value.trim();
+      const feedback = document.getElementById('userAdded');
+      if (!username || !password) return showFeedback('Enter both fields', 'text-rose-400');
+
+      if (await usernameExists(username)) return showFeedback('Username exists', 'text-rose-400');
+
+      const hashed = await hashPassword(password);
+      const newUserRef = db.ref('users').push();
+      await newUserRef.set({ username, password: hashed, uids: [], createdAt: Date.now() });
+      document.getElementById('newUsername').value = '';
+      document.getElementById('newPassword').value = '';
+      showFeedback('User Added!', 'text-emerald-400');
+      renderUserList();
+    });
+
+    function showFeedback(msg, color) {
+      const el = document.getElementById('userAdded');
+      el.textContent = msg;
+      el.classList.remove('hidden', 'text-emerald-400', 'text-rose-400');
+      el.classList.add(color);
+      setTimeout(() => el.classList.add('hidden'), 2000);
+    }
+
+    async function renderUserList() {
+      const snapshot = await db.ref('users').once('value');
+      const users = snapshot.val() || {};
+      userTbody.innerHTML = '';
+      Object.entries(users).forEach(([id, user]) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-red-900 cursor-pointer hover:bg-red-900';
+        tr.dataset.id = id;
+        tr.innerHTML = `
+          <td class="py-3">${user.username}</td>
+          <td class="py-3 text-center">
+            <button class="text-red-400 removeUserBtn">Delete</button>
+          </td>
+        `;
+        tr.addEventListener('click', (e) => {
+          if (e.target.classList.contains('removeUserBtn')) return;
+          showUserUIDs(id, user.username, user.uids || []);
+        });
+        userTbody.appendChild(tr);
+      });
+    }
+
+    function showUserUIDs(userId, username, uids) {
+      currentUserId = userId;
+      uidSectionTitle.textContent = `UIDs for ${username}`;
+      uidSection.classList.remove('hidden');
+      renderUIDList(uids);
+    }
+
+    function renderUIDList(uids) {
+      uidList.innerHTML = '';
+      uids.forEach((uid, idx) => {
+        const div = document.createElement('div');
+        div.className = 'flex justify-between items-center bg-gray-800 p-3 rounded mb-2';
+        div.innerHTML = `
+          <span>${uid.uid} (${uid.displayName || 'No name'}) - ${new Date(uid.expiry).toLocaleDateString()}</span>
+          <button class="text-red-400 removeUidBtn" data-idx="${idx}">Remove</button>
+        `;
+        uidList.appendChild(div);
+      });
+    }
+
+    addUidBtn.addEventListener('click', () => {
+      const uid = prompt('Enter UID:');
+      if (!uid) return;
+      const display = prompt('Display Name:') || '';
+      const expiry = prompt('Expiry (YYYY-MM-DD) or "lifetime":', 'lifetime');
+      const exp = expiry === 'lifetime' ? 9999999999999 : new Date(expiry).getTime();
+      db.ref(`users/${currentUserId}/uids`).push({ uid, displayName: display, expiry: exp });
+      setTimeout(() => db.ref(`users/${currentUserId}`).once('value').then(s => renderUIDList(s.val().uids || []))), 500);
+    });
+
+    uidList.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('removeUidBtn')) {
+        const idx = e.target.dataset.idx;
+        const snapshot = await db.ref(`users/${currentUserId}/uids`).once('value');
+        const uids = snapshot.val() || [];
+        uids.splice(idx, 1);
+        await db.ref(`users/${currentUserId}/uids`).set(uids);
+        renderUIDList(uids);
+      }
+    });
+
+    userTbody.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('removeUserBtn')) {
+        const tr = e.target.closest('tr');
+        const id = tr.dataset.id;
+        if (confirm('Delete user and all UIDs?')) {
+          await db.ref(`users/${id}`).remove();
+          renderUserList();
+          uidSection.classList.add('hidden');
+        }
+      }
+    });
+
+    renderUserList();
+  </script>
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SG71 UID AUTH • Admin</title>
+  <link href="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-database-compat.js"></script>
+  <style>
+    body { background: linear-gradient(135deg, #1a1a1a, #000); color: #fff; font-family: 'Segoe UI', sans-serif; }
+    .glass { background: rgba(30,30,30,.8); backdrop-filter: blur(10px); border: 1px solid rgba(255,82,82,.3); }
+    .btn { background: #ff5252; transition: all 0.3s; }
+    .btn:hover { background: #ff1744; transform: translateY(-2px); }
+    .input { background: rgba(50,50,50,.8); border: 1px solid #ff5252; color: #fff; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+  <div class="max-w-4xl mx-auto glass rounded-2xl p-8 shadow-2xl">
+    <h1 class="text-4xl font-bold text-red-500 mb-8 text-center">HEC ADMIN PANEL</h1>
+
+    <div class="grid md:grid-cols-2 gap-6 mb-8">
+      <div>
+        <input id="newUsername" class="input w-full p-3 rounded" placeholder="Username" />
+      </div>
+      <div>
+        <input id="newPassword" type="password" class="input w-full p-3 rounded" placeholder="Password" />
+      </div>
+    </div>
+    <button id="addUserBtn" class="btn w-full py-3 rounded font-bold text-lg">ADD USER</button>
+    <p id="userAdded" class="mt-4 text-center hidden"></p>
+
+    <div class="mt-12">
+      <h2 class="text-2xl font-bold text-red-400 mb-4">USERS</h2>
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-red-800">
+            <th class="py-3 text-left">Username</th>
+            <th class="py-3 text-center">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="userTbody"></tbody>
+      </table>
+    </div>
+
+    <div id="uidSection" class="mt-12 hidden">
+      <h3 id="uidSectionTitle" class="text-xl font-bold mb-4"></h3>
+      <button id="addUidBtn" class="btn px-6 py-2 rounded mb-4">ADD UID</button>
+      <div id="uidList"></div>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+  apiKey: "AIzaSyDqOWLMJvEPLvRQr7DPhl2H93AAf6Fr3AU",
+  authDomain: "hec-bypass.firebaseapp.com",
+  databaseURL: "https://hec-bypass-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "hec-bypass",
+  storageBucket: "hec-bypass.firebasestorage.app",
+  messagingSenderId: "632273771631",
+  appId: "1:632273771631:web:e816cd27018a742052c19a",
+  measurementId: "G-M0ZMYHEDGY"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const userTbody = document.getElementById('userTbody');
+    const uidSection = document.getElementById('uidSection');
+    const uidSectionTitle = document.getElementById('uidSectionTitle');
+    const uidList = document.getElementById('uidList');
+    const addUidBtn = document.getElementById('addUidBtn');
+    let currentUserId = null;
+
+    async function hashPassword(p) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(p);
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function usernameExists(username) {
+      const snapshot = await db.ref('users').once('value');
+      const users = snapshot.val() || {};
+      return Object.values(users).some(u => u.username === username);
+    }
+
+    document.getElementById('addUserBtn').addEventListener('click', async () => {
+      const username = document.getElementById('newUsername').value.trim();
+      const password = document.getElementById('newPassword').value.trim();
+      const feedback = document.getElementById('userAdded');
+      if (!username || !password) return showFeedback('Enter both fields', 'text-rose-400');
+
+      if (await usernameExists(username)) return showFeedback('Username exists', 'text-rose-400');
+
+      const hashed = await hashPassword(password);
+      const newUserRef = db.ref('users').push();
+      await newUserRef.set({ username, password: hashed, uids: [], createdAt: Date.now() });
+      document.getElementById('newUsername').value = '';
+      document.getElementById('newPassword').value = '';
+      showFeedback('User Added!', 'text-emerald-400');
+      renderUserList();
+    });
+
+    function showFeedback(msg, color) {
+      const el = document.getElementById('userAdded');
+      el.textContent = msg;
+      el.classList.remove('hidden', 'text-emerald-400', 'text-rose-400');
+      el.classList.add(color);
+      setTimeout(() => el.classList.add('hidden'), 2000);
+    }
+
+    async function renderUserList() {
+      const snapshot = await db.ref('users').once('value');
+      const users = snapshot.val() || {};
+      userTbody.innerHTML = '';
+      Object.entries(users).forEach(([id, user]) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-red-900 cursor-pointer hover:bg-red-900';
+        tr.dataset.id = id;
+        tr.innerHTML = `
+          <td class="py-3">${user.username}</td>
+          <td class="py-3 text-center">
+            <button class="text-red-400 removeUserBtn">Delete</button>
+          </td>
+        `;
+        tr.addEventListener('click', (e) => {
+          if (e.target.classList.contains('removeUserBtn')) return;
+          showUserUIDs(id, user.username, user.uids || []);
+        });
+        userTbody.appendChild(tr);
+      });
+    }
+
+    function showUserUIDs(userId, username, uids) {
+      currentUserId = userId;
+      uidSectionTitle.textContent = `UIDs for ${username}`;
+      uidSection.classList.remove('hidden');
+      renderUIDList(uids);
+    }
+
+    function renderUIDList(uids) {
+      uidList.innerHTML = '';
+      uids.forEach((uid, idx) => {
+        const div = document.createElement('div');
+        div.className = 'flex justify-between items-center bg-gray-800 p-3 rounded mb-2';
+        div.innerHTML = `
+          <span>${uid.uid} (${uid.displayName || 'No name'}) - ${new Date(uid.expiry).toLocaleDateString()}</span>
+          <button class="text-red-400 removeUidBtn" data-idx="${idx}">Remove</button>
+        `;
+        uidList.appendChild(div);
+      });
+    }
+
+    addUidBtn.addEventListener('click', () => {
+      const uid = prompt('Enter UID:');
+      if (!uid) return;
+      const display = prompt('Display Name:') || '';
+      const expiry = prompt('Expiry (YYYY-MM-DD) or "lifetime":', 'lifetime');
+      const exp = expiry === 'lifetime' ? 9999999999999 : new Date(expiry).getTime();
+      db.ref(`users/${currentUserId}/uids`).push({ uid, displayName: display, expiry: exp });
+      setTimeout(() => db.ref(`users/${currentUserId}`).once('value').then(s => renderUIDList(s.val().uids || []))), 500);
+    });
+
+    uidList.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('removeUidBtn')) {
+        const idx = e.target.dataset.idx;
+        const snapshot = await db.ref(`users/${currentUserId}/uids`).once('value');
+        const uids = snapshot.val() || [];
+        uids.splice(idx, 1);
+        await db.ref(`users/${currentUserId}/uids`).set(uids);
+        renderUIDList(uids);
+      }
+    });
+
+    userTbody.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('removeUserBtn')) {
+        const tr = e.target.closest('tr');
+        const id = tr.dataset.id;
+        if (confirm('Delete user and all UIDs?')) {
+          await db.ref(`users/${id}`).remove();
+          renderUserList();
+          uidSection.classList.add('hidden');
+        }
+      }
+    });
+
+    renderUserList();
+  </script>
+</body>
+</html>
